@@ -7,7 +7,9 @@ const out = await build({
   bundle: true, format: 'iife', globalName: 'FaroesteEngine', minify: true, write: false, target: 'es2020',
 });
 const js = out.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
-const html = (await readFile(new URL('index.src.html', here), 'utf8')).replace('/*ENGINE*/', () => js);
+const online = await readFile(new URL('online.js', here), 'utf8');
+const html = (await readFile(new URL('index.src.html', here), 'utf8')).replace('/*ENGINE*/', () => js)
+  .replace('/*ONLINE*/', () => online);
 await mkdir(new URL('dist/', here), { recursive: true });
 await writeFile(new URL('dist/faroeste.html', here), html);
 
