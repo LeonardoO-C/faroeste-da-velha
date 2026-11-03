@@ -162,6 +162,7 @@ button:focus-visible { outline: 3px solid var(--brass); outline-offset: 2px; }
 .topbar .display { font-size: 1.15rem; color: var(--brass); }
 .link { background: none; border: 0; color: var(--muted); font-weight: 700; padding: 6px 4px; text-decoration: underline; text-underline-offset: 3px; }
 
+.invite { width: 100%; font: inherit; font-size: .85rem; padding: 10px; border-radius: 4px; border: 2px solid var(--muted); background: rgba(0,0,0,.3); color: var(--paper); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -169,6 +170,7 @@ button:focus-visible { outline: 3px solid var(--brass); outline-offset: 2px; }
 
 <div class="app" id="app"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>/*ENGINE*/</script>
 <script>
 (() => {
@@ -198,7 +200,10 @@ const cfg = {
 };
 if (!MODES[cfg.mode]) cfg.mode = 'classico';
 
-const names = () => cfg.vs === 'bot' ? { X: 'Você', O: 'Bandido' } : { X: 'Xerife', O: 'Bandido' };
+const names = () => {
+  if (S && S.online) return S.you === 'X' ? { X: 'Você', O: 'Adversário' } : { X: 'Adversário', O: 'Você' };
+  return cfg.vs === 'bot' ? { X: 'Você', O: 'Bandido' } : { X: 'Xerife', O: 'Bandido' };
+};
 
 // ---------- Som (estampido sintetizado) ----------
 let ctx = null;
@@ -245,7 +250,7 @@ let S = null; // partida em andamento
 let timer = null;
 const clear = () => { if (timer) { clearInterval(timer); timer = null; } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const isBot = (p) => cfg.vs === 'bot' && p === 'O';
+const isBot = (p) => !(S && S.online) && cfg.vs === 'bot' && p === 'O';
 
 // ---------- Menu ----------
 function seg(key, opts, cls = '') {
@@ -259,7 +264,7 @@ function menu() {
       <h1>Faroeste da Velha</h1>
       <div class="tag">Jogo da velha no gatilho</div>
       <div class="field"><span>Modo</span>${seg("mode", MODES)}</div>
-      <div class="field"><span>Adversário</span>${seg('vs', { bot: { label: 'Contra o bot', sub: 'Você é o Xerife' }, local: { label: 'Dois jogadores', sub: 'No mesmo celular' } })}</div>
+      <div class="field"><span>Adversário</span>${seg('vs', { bot: { label: 'Contra o bot', sub: 'Você é o Xerife' }, local: { label: 'Dois jogadores', sub: 'No mesmo celular' }, online: { label: 'Online', sub: 'Convide um amigo' } })}</div>
       <div class="field" id="lvl" ${cfg.vs === 'bot' ? '' : 'hidden'}><span>Pontaria do bot</span>${seg('level', LEVELS, 'three')}</div>
       <button class="cta" id="go" type="button">Sacar o revólver</button>
     </div>
@@ -271,7 +276,7 @@ function menu() {
     document.getElementById(b.id)?.focus();
   });
   document.getElementById('snd').onclick = () => { cfg.sound = !cfg.sound; store.set('sound', cfg.sound ? '1' : '0'); menu(); };
-  document.getElementById('go').onclick = () => { audio(); startSeries(); };
+  document.getElementById('go').onclick = () => { audio(); cfg.vs === 'online' ? Online.create(cfg.mode) : startSeries(); };
 }
 
 // ---------- Série ----------
@@ -384,17 +389,17 @@ const fmt = (ms) => { const s = Math.ceil(ms / 1000); return `${Math.floor(s / 6
 
 function renderGame() {
   const n = names(), c = S.conf;
-  const series = S.modeKey === 'classico';
+  const series = S.modeKey === 'classico' && !S.online;
   $app.innerHTML = `
     <div class="topbar"><button class="link" id="quit" type="button">Desistir</button><span class="display">${c.label}</span></div>
     <div class="hud">
       <div class="plate x" id="px"><div class="name">${n.X}</div><div class="fuse"><i id="fx"></i><b id="bx"></b></div><div class="clock" id="cx"></div></div>
-      <div class="score">${series ? `${S.wins.X} – ${S.wins.O}<small>Partida ${S.games}${cfg.vs === 'bot' ? ' · ' + LEVELS[cfg.level] : ''}</small>` : `<small>${cfg.vs === 'bot' ? 'Bot ' + LEVELS[cfg.level].toLowerCase() : 'Partida única'}</small>`}</div>
+      <div class="score">${series ? `${S.wins.X} – ${S.wins.O}<small>Partida ${S.games}${cfg.vs === 'bot' ? ' · ' + LEVELS[cfg.level] : ''}</small>` : `<small>${S.online ? 'Online' : cfg.vs === 'bot' ? 'Bot ' + LEVELS[cfg.level].toLowerCase() : 'Partida única'}</small>`}</div>
       <div class="plate o" id="po"><div class="name">${n.O}</div><div class="fuse"><i id="fo"></i><b id="bo"></b></div><div class="clock" id="co"></div></div>
     </div>
     <div class="status" id="status" aria-live="polite"></div>
     <div class="table" id="table"></div>`;
-  document.getElementById('quit').onclick = () => { if (!S.over) finish('O', 'desistência', true); };
+  document.getElementById('quit').onclick = () => { if (S.over) return; if (S.online) Online.send({ acao: 'desistir' }); else finish('O', 'desistência', true); };
   drawBoard();
   paintClocks();
 }
@@ -419,14 +424,16 @@ function statusText() {
   const n = names();
   if (S.over) return '';
   if (S.thinking) return `${n.O} está mirando…`;
+  if (S.online && S.g.turn !== S.you) return 'O adversário está mirando…';
+  if (S.online && S.conf.kind !== 'ult') return 'Sua vez. Escolha onde atirar.';
   if (S.conf.kind === 'ult') {
     const where = S.g.next === null ? 'em qualquer tabuleiro aberto' : 'no tabuleiro destacado';
-    return cfg.vs === 'bot' ? `Sua vez: atire ${where}.` : `Vez de ${n[S.g.turn]}: atire ${where}.`;
+    return cfg.vs === 'bot' || S.online ? `Sua vez: atire ${where}.` : `Vez de ${n[S.g.turn]}: atire ${where}.`;
   }
   return cfg.vs === 'bot' ? 'Sua vez. Escolha onde atirar.' : `Vez de ${n[S.g.turn]}.`;
 }
 
-function canHumanPlay() { return !S.over && !S.thinking && !isBot(S.g.turn); }
+function canHumanPlay() { return !S.over && !S.thinking && !S.sending && !isBot(S.g.turn) && (!S.online || S.g.turn === S.you); }
 
 function cellHtml(p, idx, attrs, isLast, isWin, enabled) {
   const cls = ['cell', isLast ? 'shot last-' + p.toLowerCase() : '', isWin ? 'win' : ''].join(' ');
@@ -469,6 +476,7 @@ function apply(move) {
 
 function human(move) {
   if (!canHumanPlay()) return;
+  if (S.online) { Online.move(move); return; }
   try { apply(move); } catch { return; }
   maybeBot();
 }
@@ -525,6 +533,8 @@ function finish(winner, how, quit = false) {
   }, winner === 'draw' ? 300 : 900);
 }
 
-menu();
+/*ONLINE*/
+
+if (!Online.boot()) menu();
 })();
 </script>

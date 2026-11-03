@@ -1,0 +1,8 @@
+project_id = "fvgeaoyitwbbiubsnoxw"
+
+[auth]
+# Login sem cadastro para o protótipo: o jogador entra com um apelido.
+enable_anonymous_sign_ins = true
+
+[functions.partida]
+verify_jwt = true
